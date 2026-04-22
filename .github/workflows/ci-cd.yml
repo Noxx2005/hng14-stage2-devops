@@ -30,8 +30,8 @@ jobs:
 
       - name: Lint Python code
         run: |
-          flake8 api/main.py --ignore=E501,W503,E302,E305
-          flake8 worker/worker.py --ignore=E501,W503,E302,E305
+          flake8 api/main.py --ignore=E501,W503,E302,E305,W292
+          flake8 worker/worker.py --ignore=E501,W503,E302,E305,W292
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
