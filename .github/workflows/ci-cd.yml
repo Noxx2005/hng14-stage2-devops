@@ -184,11 +184,11 @@ jobs:
 
       - name: Start services
         run: |
-          docker-compose up -d
+          docker compose up -d
 
       - name: Wait for services to be healthy
         run: |
-          timeout 60 bash -c 'until docker-compose ps | grep -q "healthy"; do sleep 2; done'
+          timeout 60 bash -c 'until docker compose ps | grep -q "healthy"; do sleep 2; done'
 
       - name: Submit job
         run: |
@@ -212,7 +212,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker-compose down -v
+          docker compose down -v
 
   deploy:
     runs-on: ubuntu-latest
@@ -231,38 +231,38 @@ jobs:
       - name: Rolling update API
         run: |
           # Start new container
-          docker-compose up -d --no-deps --scale api=2 api
+          docker compose up -d --no-deps --scale api=2 api
 
           # Wait for new container to be healthy
           timeout 60 bash -c 'until docker ps --filter "name=api" --format "{{.Status}}" | grep -q "healthy"; do sleep 2; done' || {
             echo "New container failed health check, rolling back"
-            docker-compose up -d --no-deps --scale api=1 api
+            docker compose up -d --no-deps --scale api=1 api
             exit 1
           }
 
           # Stop old container
-          docker-compose up -d --no-deps --scale api=1 api
+          docker compose up -d --no-deps --scale api=1 api
 
       - name: Rolling update Worker
         run: |
-          docker-compose up -d --no-deps --scale worker=2 worker
+          docker compose up -d --no-deps --scale worker=2 worker
           timeout 60 bash -c 'until docker ps --filter "name=worker" --format "{{.Status}}" | grep -q "healthy"; do sleep 2; done' || {
             echo "New container failed health check, rolling back"
-            docker-compose up -d --no-deps --scale worker=1 worker
+            docker compose up -d --no-deps --scale worker=1 worker
             exit 1
           }
-          docker-compose up -d --no-deps --scale worker=1 worker
+          docker compose up -d --no-deps --scale worker=1 worker
 
       - name: Rolling update Frontend
         run: |
-          docker-compose up -d --no-deps --scale frontend=2 frontend
+          docker compose up -d --no-deps --scale frontend=2 frontend
           timeout 60 bash -c 'until docker ps --filter "name=frontend" --format "{{.Status}}" | grep -q "healthy"; do sleep 2; done' || {
             echo "New container failed health check, rolling back"
-            docker-compose up -d --no-deps --scale frontend=1 frontend
+            docker compose up -d --no-deps --scale frontend=1 frontend
             exit 1
           }
-          docker-compose up -d --no-deps --scale frontend=1 frontend
+          docker compose up -d --no-deps --scale frontend=1 frontend
 
       - name: Verify deployment
         run: |
-          docker-compose ps
+          docker compose ps
