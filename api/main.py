@@ -23,6 +23,7 @@ except redis.ConnectionError as e:
     logger.error(f"Failed to connect to Redis: {e}")
     sys.exit(1)
 
+
 @app.get("/health")
 def health_check():
     try:
