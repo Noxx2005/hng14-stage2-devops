@@ -195,6 +195,10 @@ jobs:
           docker compose ps
           docker compose logs
 
+      - name: Test frontend health
+        run: |
+          curl -f http://localhost:3000/health || exit 1
+
       - name: Submit job
         run: |
           response=$(curl -s -X POST http://localhost:3000/submit)
