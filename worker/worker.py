@@ -31,10 +31,12 @@ def process_job(job_id):
     except redis.RedisError as e:
         logger.error(f"Failed to process job {job_id}: {e}")
 
+
 def signal_handler(sig, frame):
     global running
     logger.info(f"Received signal {sig}, shutting down gracefully...")
     running = False
+
 
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)

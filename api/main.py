@@ -31,6 +31,7 @@ def health_check():
     except redis.ConnectionError:
         raise HTTPException(status_code=503, detail="Redis connection failed")
 
+
 @app.post("/jobs")
 def create_job():
     try:
@@ -43,6 +44,7 @@ def create_job():
         logger.error(f"Failed to create job: {e}")
         raise HTTPException(status_code=500, detail="Failed to create job")
 
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str):
     try:
@@ -54,9 +56,11 @@ def get_job(job_id: str):
         logger.error(f"Failed to get job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get job")
 
+
 def signal_handler(sig, frame):
     logger.info("Shutting down gracefully...")
     sys.exit(0)
+
 
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
