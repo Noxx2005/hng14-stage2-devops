@@ -41,7 +41,7 @@ jobs:
       - name: Install ESLint
         run: |
           cd frontend
-          npm install -g eslint
+          npm install -g eslint@8
           npm install
 
       - name: Lint JavaScript code
