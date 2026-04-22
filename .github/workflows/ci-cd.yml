@@ -1,0 +1,292 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: localhost:5000
+  IMAGE_API: ${{ github.repository }}/api
+  IMAGE_WORKER: ${{ github.repository }}/worker
+  IMAGE_FRONTEND: ${{ github.repository }}/frontend
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python linting tools
+        run: |
+          pip install flake8
+
+      - name: Lint Python code
+        run: |
+          flake8 api/main.py --max-line-length=100 --ignore=E501,W503
+          flake8 worker/worker.py --max-line-length=100 --ignore=E501,W503
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install ESLint
+        run: |
+          cd frontend
+          npm install -g eslint
+          npm install
+
+      - name: Lint JavaScript code
+        run: |
+          cd frontend
+          eslint app.js
+
+      - name: Install Hadolint
+        run: |
+          wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Lint Dockerfiles
+        run: |
+          hadolint api/Dockerfile
+          hadolint worker/Dockerfile
+          hadolint frontend/Dockerfile
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd api
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          cd api
+          pip install pytest pytest-cov
+          pytest test_main.py --cov=. --cov-report=xml --cov-report=term
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: api/coverage.xml
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        run: |
+          docker build -t $REGISTRY/api:${{ github.sha }} -t $REGISTRY/api:latest ./api
+          docker push $REGISTRY/api:${{ github.sha }}
+          docker push $REGISTRY/api:latest
+
+      - name: Build Worker image
+        run: |
+          docker build -t $REGISTRY/worker:${{ github.sha }} -t $REGISTRY/worker:latest ./worker
+          docker push $REGISTRY/worker:${{ github.sha }}
+          docker push $REGISTRY/worker:latest
+
+      - name: Build Frontend image
+        run: |
+          docker build -t $REGISTRY/frontend:${{ github.sha }} -t $REGISTRY/frontend:latest ./frontend
+          docker push $REGISTRY/frontend:${{ github.sha }}
+          docker push $REGISTRY/frontend:latest
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull images
+        run: |
+          docker pull localhost:5000/api:${{ github.sha }}
+          docker pull localhost:5000/worker:${{ github.sha }}
+          docker pull localhost:5000/frontend:${{ github.sha }}
+
+      - name: Install Trivy
+        run: |
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+      - name: Scan API image
+        run: |
+          trivy image --format sarif --output api-scan.sarif localhost:5000/api:${{ github.sha }}
+          trivy image --severity CRITICAL localhost:5000/api:${{ github.sha }} || exit 1
+
+      - name: Scan Worker image
+        run: |
+          trivy image --format sarif --output worker-scan.sarif localhost:5000/worker:${{ github.sha }}
+          trivy image --severity CRITICAL localhost:5000/worker:${{ github.sha }} || exit 1
+
+      - name: Scan Frontend image
+        run: |
+          trivy image --format sarif --output frontend-scan.sarif localhost:5000/frontend:${{ github.sha }}
+          trivy image --severity CRITICAL localhost:5000/frontend:${{ github.sha }} || exit 1
+
+      - name: Upload SARIF results
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-scan-results
+          path: |
+            api-scan.sarif
+            worker-scan.sarif
+            frontend-scan.sarif
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull images
+        run: |
+          docker pull localhost:5000/api:${{ github.sha }}
+          docker pull localhost:5000/worker:${{ github.sha }}
+          docker pull localhost:5000/frontend:${{ github.sha }}
+
+      - name: Tag images for local use
+        run: |
+          docker tag localhost:5000/api:${{ github.sha }} hng14-stage2-devops-api:latest
+          docker tag localhost:5000/worker:${{ github.sha }} hng14-stage2-devops-worker:latest
+          docker tag localhost:5000/frontend:${{ github.sha }} hng14-stage2-devops-frontend:latest
+
+      - name: Start services
+        run: |
+          docker-compose up -d
+
+      - name: Wait for services to be healthy
+        run: |
+          timeout 60 bash -c 'until docker-compose ps | grep -q "healthy"; do sleep 2; done'
+
+      - name: Submit job
+        run: |
+          response=$(curl -s -X POST http://localhost:3000/submit)
+          job_id=$(echo $response | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
+          echo "JOB_ID=$job_id" >> $GITHUB_ENV
+
+      - name: Poll job status
+        run: |
+          for i in {1..30}; do
+            status=$(curl -s http://localhost:3000/status/$JOB_ID | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+            if [ "$status" = "completed" ]; then
+              echo "Job completed successfully"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Job did not complete in time"
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose down -v
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: integration-test
+    if: github.ref == 'refs/heads/main'
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull new images
+        run: |
+          docker pull localhost:5000/api:${{ github.sha }}
+          docker pull localhost:5000/worker:${{ github.sha }}
+          docker pull localhost:5000/frontend:${{ github.sha }}
+
+      - name: Tag images for deployment
+        run: |
+          docker tag localhost:5000/api:${{ github.sha }} hng14-stage2-devops-api:latest
+          docker tag localhost:5000/worker:${{ github.sha }} hng14-stage2-devops-worker:latest
+          docker tag localhost:5000/frontend:${{ github.sha }} hng14-stage2-devops-frontend:latest
+
+      - name: Rolling update API
+        run: |
+          # Start new container
+          docker-compose up -d --no-deps --scale api=2 api
+          
+          # Wait for new container to be healthy
+          timeout 60 bash -c 'until docker ps --filter "name=api" --format "{{.Status}}" | grep -q "healthy"; do sleep 2; done' || {
+            echo "New container failed health check, rolling back"
+            docker-compose up -d --no-deps --scale api=1 api
+            exit 1
+          }
+          
+          # Stop old container
+          docker-compose up -d --no-deps --scale api=1 api
+
+      - name: Rolling update Worker
+        run: |
+          docker-compose up -d --no-deps --scale worker=2 worker
+          timeout 60 bash -c 'until docker ps --filter "name=worker" --format "{{.Status}}" | grep -q "healthy"; do sleep 2; done' || {
+            echo "New container failed health check, rolling back"
+            docker-compose up -d --no-deps --scale worker=1 worker
+            exit 1
+          }
+          docker-compose up -d --no-deps --scale worker=1 worker
+
+      - name: Rolling update Frontend
+        run: |
+          docker-compose up -d --no-deps --scale frontend=2 frontend
+          timeout 60 bash -c 'until docker ps --filter "name=frontend" --format "{{.Status}}" | grep -q "healthy"; do sleep 2; done' || {
+            echo "New container failed health check, rolling back"
+            docker-compose up -d --no-deps --scale frontend=1 frontend
+            exit 1
+          }
+          docker-compose up -d --no-deps --scale frontend=1 frontend
+
+      - name: Verify deployment
+        run: |
+          docker-compose ps
