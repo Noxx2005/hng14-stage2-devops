@@ -195,8 +195,14 @@ jobs:
           docker compose ps
           docker compose logs
 
+      - name: Inspect frontend container
+        run: |
+          docker compose ps frontend
+          docker inspect $(docker compose ps -q frontend) || true
+
       - name: Submit job
         run: |
+          sleep 10
           response=$(curl -s -X POST http://localhost:3000/submit)
           echo "Response: $response"
           job_id=$(echo $response | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
